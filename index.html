@@ -78,7 +78,7 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;touch-acti
     <div class="overlay" id="ov">
       <h1>地底のランプ</h1>
       <p>3つの層を下り、鍵を拾って扉から脱出せよ。<br>少しの高さから落ちただけでミス。</p>
-      <p class="sub">十字キー：移動・ロープ昇降　ジャンプ：跳ぶ<br>なげる：ボールを投げる（おばけを倒せる）<br>ジャンプ中にロープに触れると自動でつかまる<br>ロープ中に ←/→ を押しながらジャンプで飛び降り</p>
+      <p class="sub">十字キー：移動・ロープ昇降　ジャンプ：跳ぶ<br>なげる：ボールを投げる（空中でもOK）<br>2つのボタンの間を押すとジャンプしながら投げる<br>ジャンプ中にロープに触れると自動でつかまる<br>ロープ中に ←/→ を押しながらジャンプで飛び降り</p>
       <p class="blink">タップでスタート</p>
     </div>
   </div>
@@ -153,7 +153,7 @@ const MAP_SRC=[
 "#D........R....$..E#",
 "####################"];
 const T=8,W=20,H=MAP_SRC.length,VIEW_H=120;
-const SPEED=0.7,G=0.14,JUMP=-1.41,MAXV=3,CLIMB=0.6,FALL_LIMIT=18,O2_DRAIN=100/(60*150);
+const SPEED=0.7,G=0.14,JUMP=-1.73,MAXV=3,CLIMB=0.6,FALL_LIMIT=18,O2_DRAIN=100/(60*150);
 // 層ごとの再開地点
 const CHECKPOINTS=[null,{row:15,x:17,y:152,name:'第2層'},{row:30,x:137,y:280,name:'第3層'}];
 // おばけ：[中心x, 中心y, 横の振れ幅, 縦の振れ幅, 横の速さ, 縦の速さ]
@@ -350,14 +350,14 @@ function update(){
       else if(at(c,p.y+p.h/2)!=='R') goAir(0,0);
     }
     if(p.state==='rope'&&dir&&!jp&&solid(c,p.y+p.h+.5)){p.y=Math.floor((p.y+p.h+.5)/T)*T-p.h;p.state='ground';}
-    if(p.state==='rope'&&jp&&dir){p.face=dir;goAir(-0.99,dir*SPEED);grabCD=20;sfx.jump();}
+    if(p.state==='rope'&&jp&&dir){p.face=dir;goAir(-1.21,dir*SPEED);grabCD=20;sfx.jump();}
   }
 
   if(p.state==='ground') for(let i=CHECKPOINTS.length-1;i>cp;i--){const c=CHECKPOINTS[i];
     if(p.y>=c.row*T){cp=i;toast(c.name+'に到着（ここから再開）',120);break;}}
   camY+=(clampCam(p.y+4-VIEW_H/2)-camY)*.12;
 
-  if(fp&&!ball&&p.state!=='rope'){ball={x:p.x+p.w/2-2+p.face*3,y:p.y+1,vx:p.face*1.3,vy:-1.5,t:0,roll:false,d:0};sfx.throw();}
+  if(fp&&!ball&&p.state!=='rope'){ball={x:p.x+p.w/2-2+p.face*3,y:p.y+1,vx:p.face*0.91,vy:-1.5,t:0,roll:false,d:0};sfx.throw();}
   if(ball) updateBall();
   if(puff>0) puff--;
   // items
@@ -510,12 +510,17 @@ dpad.addEventListener('pointermove',e=>{if(e.pointerId===dpadId)dpadSet(e);});
 const dpadEnd=e=>{if(e.pointerId===dpadId){dpadId=null;touch.left=touch.right=touch.up=touch.down=false;}};
 ['pointerup','pointercancel','lostpointercapture'].forEach(ev=>dpad.addEventListener(ev,dpadEnd));
 
-const fb=$('fire');
-fb.addEventListener('pointerdown',e=>{e.preventDefault();initAudio();touch.fire=true;});
-['pointerup','pointercancel','pointerleave'].forEach(ev=>fb.addEventListener(ev,()=>{touch.fire=false;}));
-const jb=$('jump');
-jb.addEventListener('pointerdown',e=>{e.preventDefault();initAudio();touch.jump=true;});
-['pointerup','pointercancel','pointerleave'].forEach(ev=>jb.addEventListener(ev,()=>{touch.jump=false;}));
+// ボタン：指を滑らせて押し替え可。2つの間を押すと両方
+const btns=document.querySelector('.btns'),fb=$('fire'),jb=$('jump'),bp=new Map();
+function btnHit(x,y){
+  const hit=(el,pad)=>{const r=el.getBoundingClientRect();return Math.hypot(x-(r.left+r.width/2),y-(r.top+r.height/2))<r.width/2+pad;};
+  const f=hit(fb,0),j=hit(jb,0); if(f||j) return {fire:f,jump:j};
+  return {fire:hit(fb,18),jump:hit(jb,18)};
+}
+function btnSync(){touch.fire=touch.jump=false;for(const v of bp.values()){if(v.fire)touch.fire=true;if(v.jump)touch.jump=true;}}
+btns.addEventListener('pointerdown',e=>{e.preventDefault();initAudio();try{btns.setPointerCapture(e.pointerId);}catch(_){}bp.set(e.pointerId,btnHit(e.clientX,e.clientY));btnSync();});
+btns.addEventListener('pointermove',e=>{if(bp.has(e.pointerId)){bp.set(e.pointerId,btnHit(e.clientX,e.clientY));btnSync();}});
+['pointerup','pointercancel','lostpointercapture'].forEach(ev=>btns.addEventListener(ev,e=>{bp.delete(e.pointerId);btnSync();}));
 ov.addEventListener('pointerdown',e=>{e.preventDefault();initAudio();if(mode!=='play'&&mode!=='dead')startGame();});
 document.addEventListener('contextmenu',e=>e.preventDefault());
 
