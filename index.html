@@ -77,7 +77,7 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;touch-acti
     <div class="toast" id="toast" hidden></div>
     <div class="overlay" id="ov">
       <h1>地底のランプ</h1>
-      <p>鍵を拾って、扉から脱出せよ。<br>少しの高さから落ちただけでミス。</p>
+      <p>3つの層を下り、鍵を拾って扉から脱出せよ。<br>少しの高さから落ちただけでミス。</p>
       <p class="sub">十字キー：移動・ロープ昇降　ジャンプ：跳ぶ<br>なげる：ボールを投げる（おばけを倒せる）<br>ジャンプ中にロープに触れると自動でつかまる<br>ロープ中に ←/→ を押しながらジャンプで飛び降り</p>
       <p class="blink">タップでスタート</p>
     </div>
@@ -109,23 +109,60 @@ const sctx=shade.getContext('2d');
 const MAP_SRC=[
 "####################",
 "#..................#",
-"#.P............$...#",
-"#######=##.###=#####",
-"#......R......R....#",
-"#......R......R....#",
-"#......R......R....#",
-"#..K...R......R..E.#",
-"###########...R#####",
-"#.............R....#",
-"#.............R....#",
-"#.............R....#",
-"#.............R$...#",
-"#D............R....#",
+"#.P.....$.....E....#",
+"####=###########..##",
+"#...R..........#..##",
+"#...R..........#..##",
+"#...R..........#..##",
+"#...R......$...#..##",
+"#########.######..##",
+"#..............#..##",
+"#..............#..##",
+"#..............#..##",
+"#..............#..##",
+"#.................##",
+"#=##################",
+"#R##################",
+"#R.................#",
+"#R.................#",
+"#R.................#",
+"#R.....$.........E.#",
+"#########..####.####",
+"#.......#..#.......#",
+"#.......#..#.......#",
+"#.......#..#.......#",
+"#.......#..#.......#",
+"#.......#..#.......#",
+"#.......#..#.......#",
+"#.......#..#.......#",
+"#..K...............#",
+"##################=#",
+"##################R#",
+"#.................R#",
+"#.................R#",
+"#.................R#",
+"#.................R#",
+"#.....$...........R#",
+"####.#####=#########",
+"#.........R........#",
+"#.........R........#",
+"#.........R........#",
+"#.........R........#",
+"#.........R........#",
+"#.........R........#",
+"#D........R....$..E#",
 "####################"];
-const T=8,W=20,H=15;
-const SPEED=0.7,G=0.14,JUMP=-1.41,MAXV=3,CLIMB=0.6,FALL_LIMIT=18,O2_DRAIN=100/(60*90);
+const T=8,W=20,H=MAP_SRC.length,VIEW_H=120;
+const SPEED=0.7,G=0.14,JUMP=-1.41,MAXV=3,CLIMB=0.6,FALL_LIMIT=18,O2_DRAIN=100/(60*150);
+// 層ごとの再開地点
+const CHECKPOINTS=[null,{row:15,x:17,y:152,name:'第2層'},{row:30,x:137,y:280,name:'第3層'}];
+// おばけ：[中心x, 中心y, 横の振れ幅, 縦の振れ幅, 横の速さ, 縦の速さ]
+const MONSTERS=[[80,46,34,8,.021,.06],[60,98,40,9,.018,.07],[100,146,45,8,.016,.055],[36,214,20,10,.03,.065],[124,214,20,10,.026,.075],[90,274,50,8,.02,.06],[70,336,45,10,.017,.07]];
+// エレベーター：x位置, 上の停止位置, 下の停止位置
+const ELEV_SRC=[{x:128,top:24,bot:112},{x:72,top:160,bot:232}];
+const clampCam=v=>Math.max(0,Math.min(H*T-VIEW_H,v));
 
-let map,start={x:0,y:0};
+let map,start={x:0,y:0},cp=0,camY=0;
 function loadLevel(){
   map=MAP_SRC.map(r=>r.split(''));
   for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(map[y][x]==='P'){start={x:x*T+1,y:y*T};map[y][x]='.';}
@@ -137,7 +174,11 @@ const solid=(px,py)=>at(px,py)==='#';
 // ---- state ----
 let mode='title',tick=0,lives=3,score=0,o2=100,hasKey=false,deadT=0,ghost={x:0,y:0},grabCD=0;
 const p={x:0,y:0,w:6,h:8,vx:0,vy:0,state:'ground',face:1,minY:0,walk:0};
-let bat={x:0,y:0},monster={alive:true},ball=null,puff=0,puffX=0,puffY=0;
+let monsters=[],elevs=[],ball=null,puff=0,puffX=0,puffY=0;
+function resetActors(){
+  monsters=MONSTERS.map(([cx,cy,ax,ay,sx,sy],i)=>({cx,cy,ax,ay,sx,sy,ph:i*1.7,alive:true,x:cx,y:cy}));
+  elevs=ELEV_SRC.map(e=>({...e,y:e.top,py:e.top,dir:1,wait:90}));
+}
 
 // ---- input ----
 const touch={left:false,right:false,up:false,down:false,jump:false,fire:false};
@@ -172,11 +213,13 @@ let toastT=0;
 function toast(msg,frames=150){toastEl.textContent=msg;toastEl.hidden=false;toastT=frames;}
 function overlay(html){ov.innerHTML=html;ov.hidden=false;}
 
-function startGame(){lives=3;score=0;respawn();}
+function startGame(){lives=3;score=0;cp=0;loadLevel();hasKey=false;respawn();toast('鍵を探して、最下層の扉へ');}
 function respawn(){
-  loadLevel(); hasKey=false; o2=100; grabCD=0; monster.alive=true; ball=null; puff=0;
-  Object.assign(p,{x:start.x,y:start.y,vx:0,vy:0,state:'ground',face:1,minY:start.y});
-  mode='play'; ov.hidden=true; toast('鍵を取って、扉へ');
+  o2=100; grabCD=0; ball=null; puff=0; resetActors();
+  const s=cp?CHECKPOINTS[cp]:start;
+  Object.assign(p,{x:s.x,y:s.y,vx:0,vy:0,state:'ground',face:1,minY:s.y,elev:null});
+  camY=clampCam(p.y+4-VIEW_H/2);
+  mode='play'; ov.hidden=true;
 }
 function die(cause){
   if(mode!=='play') return;
@@ -205,7 +248,7 @@ function moveY(dy){
 }
 function supported(){
   const y=p.y+p.h+.1;
-  return [p.x+.5,p.x+p.w-.5].some(fx=>{const t=at(fx,y);return t==='#'||t==='=';});
+  return [p.x+.5,p.x+p.w-.5].some(fx=>{const t=at(fx,y);return t==='#'||t==='=';})||!!elevUnder();
 }
 const cx=()=>p.x+p.w/2;
 function ropeHere(){
@@ -213,7 +256,11 @@ function ropeHere(){
   return Math.abs(c-(Math.floor(c/T)*T+4))<3.5;
 }
 function grabRope(){p.state='rope';p.vx=0;p.vy=0;p.x=Math.floor(cx()/T)*T+4-p.w/2;}
-function goAir(vy,vx){p.state='air';p.vy=vy;p.vx=vx;p.minY=p.y;}
+function goAir(vy,vx){p.state='air';p.vy=vy;p.vx=vx;p.minY=p.y;p.elev=null;}
+function elevUnder(){
+  for(const e of elevs) if(p.x+p.w-.5>e.x&&p.x+.5<e.x+16&&Math.abs(p.y+p.h-e.y)<1.6) return e;
+  return null;
+}
 
 // ---- ball ----
 function ground(px,py){const t=at(px,py);return t==='#'||t==='=';}
@@ -232,8 +279,8 @@ function updateBall(){
         b.vy=b.n===1?-1.1:-0.7;b.vx*=.75;}}
   }
   if(b.t>240||b.y>H*T){ball=null;return;}
-  if(monster.alive&&b.x<bat.x+8&&b.x+4>bat.x&&b.y<bat.y+5&&b.y+4>bat.y-1){
-    monster.alive=false;ball=null;score+=300;puff=40;puffX=bat.x+4;puffY=bat.y+2;sfx.defeat();toast('おばけを倒した +300',90);
+  for(const m of monsters) if(m.alive&&b.x<m.x+8&&b.x+4>m.x&&b.y<m.y+5&&b.y+4>m.y-1){
+    m.alive=false;ball=null;score+=300;puff=40;puffX=m.x+4;puffY=m.y+2;sfx.defeat();toast('おばけを倒した +300',90);return;
   }
 }
 
@@ -245,7 +292,9 @@ function update(){
   if(toastT>0&&--toastT===0) toastEl.hidden=true;
   if(mode==='title'||mode==='over'||mode==='win'){ if(jp){initAudio();startGame();} return; }
 
-  bat.x=64+Math.sin(tick*.018)*40; bat.y=98+Math.sin(tick*.07)*9;
+  for(const m of monsters){m.x=m.cx+Math.sin(tick*m.sx+m.ph)*m.ax;m.y=m.cy+Math.sin(tick*m.sy+m.ph)*m.ay;}
+  for(const e of elevs){e.py=e.y;if(e.wait>0)e.wait--;else{e.y+=e.dir*.5;
+    if(e.y>=e.bot){e.y=e.bot;e.dir=-1;e.wait=90;}else if(e.y<=e.top){e.y=e.top;e.dir=1;e.wait=90;}}}
 
   if(mode==='dead'){
     ghost.y-=.35;
@@ -262,11 +311,13 @@ function update(){
   const dir=I('left')?-1:I('right')?1:0;
 
   if(p.state==='ground'){
+    if(p.elev) p.y=p.elev.y-p.h;
     if(dir){p.face=dir;moveX(dir*SPEED);p.walk++;}
+    p.elev=elevUnder(); if(p.elev) p.y=p.elev.y-p.h;
     const c=cx();
     if(jp){goAir(JUMP,dir*SPEED);sfx.jump();}
     else if(I('up')&&ropeHere()) grabRope();
-    else if(I('down')&&ropeHere()) grabRope();
+    else if(I('down')&&ropeHere()&&at(c,p.y+p.h+1)==='R') grabRope();
     else if(I('down')&&at(c,p.y+p.h+1)==='='&&at(c,p.y+p.h+T+1)==='R'){
       grabRope(); p.y=Math.floor((p.y+p.h+1)/T)*T+T-p.h/2+1;
     }
@@ -275,8 +326,13 @@ function update(){
   else if(p.state==='air'){
     p.vy=Math.min(p.vy+G,MAXV);
     if(moveX(p.vx)) p.vx=0;
+    const pb=p.y+p.h;
     const r=moveY(p.vy); p.minY=Math.min(p.minY,p.y);
-    if(r==='land'){
+    let landed=r==='land';
+    if(!landed&&p.vy>0) for(const e of elevs){
+      if(p.x+p.w-.5>e.x&&p.x+.5<e.x+16&&pb<=e.py+.01&&p.y+p.h>=e.y){p.y=e.y-p.h;landed=true;p.elev=e;break;}
+    }
+    if(landed){
       if(p.y-p.minY>FALL_LIMIT){die('落下！');return;}
       p.state='ground';p.vy=0;p.vx=0;
     }else if(grabCD===0&&ropeHere()){grabRope();beep(520,.06,'square',780,.04);}
@@ -293,8 +349,13 @@ function update(){
       if(solid(c,p.y+p.h)){p.y=Math.floor((p.y+p.h)/T)*T-p.h;p.state='ground';}
       else if(at(c,p.y+p.h/2)!=='R') goAir(0,0);
     }
+    if(p.state==='rope'&&dir&&!jp&&solid(c,p.y+p.h+.5)){p.y=Math.floor((p.y+p.h+.5)/T)*T-p.h;p.state='ground';}
     if(p.state==='rope'&&jp&&dir){p.face=dir;goAir(-0.99,dir*SPEED);grabCD=20;sfx.jump();}
   }
+
+  if(p.state==='ground') for(let i=CHECKPOINTS.length-1;i>cp;i--){const c=CHECKPOINTS[i];
+    if(p.y>=c.row*T){cp=i;toast(c.name+'に到着（ここから再開）',120);break;}}
+  camY+=(clampCam(p.y+4-VIEW_H/2)-camY)*.12;
 
   if(fp&&!ball&&p.state!=='rope'){ball={x:p.x+p.w/2-2+p.face*3,y:p.y+1,vx:p.face*1.3,vy:-1.5,t:0,roll:false,d:0};sfx.throw();}
   if(ball) updateBall();
@@ -310,7 +371,7 @@ function update(){
     else if(toastT<=0) toast('鍵がかかっている',60);
   }
   // bat
-  if(monster.alive&&p.x<bat.x+7&&p.x+p.w>bat.x&&p.y<bat.y+4&&p.y+p.h>bat.y) die('おばけにやられた！');
+  for(const m of monsters) if(m.alive&&p.x<m.x+7&&p.x+p.w>m.x&&p.y<m.y+4&&p.y+p.h>m.y){die('おばけにやられた！');return;}
 }
 
 // ---- sprites ----
@@ -340,7 +401,8 @@ function spr(rows,x,y,flip){
 const hash=(x,y)=>((x*374761393+y*668265263)^(x*y*1442695))>>>0;
 
 function drawTiles(){
-  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+  const y0=Math.max(0,Math.floor(camY/T)),y1=Math.min(H,y0+17);
+  for(let y=y0;y<y1;y++)for(let x=0;x<W;x++){
     const t=map[y][x],px=x*T,py=y*T,h=hash(x,y);
     if(t==='#'){
       ctx.fillStyle='#4a3324';ctx.fillRect(px,py,T,T);
@@ -366,12 +428,28 @@ function drawTiles(){
   }
 }
 
+function drawElevs(){
+  for(const e of elevs){
+    ctx.fillStyle='#3a3046';ctx.fillRect(e.x,e.top,1,e.bot-e.top+4);ctx.fillRect(e.x+15,e.top,1,e.bot-e.top+4);
+    const y=Math.round(e.y);
+    ctx.fillStyle='#8a8296';ctx.fillRect(e.x+7,e.top,2,y-e.top);
+    ctx.fillStyle='#7d8794';ctx.fillRect(e.x,y,16,4);
+    ctx.fillStyle='#c9d1da';ctx.fillRect(e.x,y,16,1);
+    ctx.fillStyle='#f2b33d';for(let i=0;i<16;i+=4)ctx.fillRect(e.x+i,y+2,2,1);
+  }
+}
 function draw(){
+  const cy=Math.round(camY);
+  ctx.fillStyle='#000';ctx.fillRect(0,0,160,120);
+  ctx.save();ctx.translate(0,-cy);
   drawTiles();
-  // bat
-  if(monster.alive){
-    ctx.globalAlpha=((tick>>6)&3)===0?0.45:1;
-    spr((tick>>3)&1?SP.bat1:SP.bat2,bat.x,bat.y-1);
+  drawElevs();
+  // monsters
+  const fade=((tick>>6)&3)===0;
+  for(const m of monsters){
+    if(!m.alive||m.y<cy-10||m.y>cy+VIEW_H+4) continue;
+    ctx.globalAlpha=fade?0.45:1;
+    spr((tick>>3)&1?SP.bat1:SP.bat2,m.x,m.y-1);
     ctx.globalAlpha=1;
   }
   if(ball){const f=Math.floor(ball.d/3)%4;spr(SP['ball'+(ball.vx<0?(4-f)%4:f)],ball.x,ball.y);}
@@ -387,12 +465,13 @@ function draw(){
     spr(s,p.x-1,p.y,flip);
   }
   if(mode==='dead'&&deadT<=100) spr(SP.ghost,ghost.x+Math.sin(tick*.15)*1.5,ghost.y);
+  ctx.restore();
 
   // lamp light
   sctx.globalCompositeOperation='source-over';
   sctx.fillStyle='rgba(6,3,12,0.62)';sctx.fillRect(0,0,160,120);
   sctx.globalCompositeOperation='destination-out';
-  const lx=p.x+p.w/2+p.face*2,ly=p.y+2,rad=58+Math.sin(tick*.21)*1.5;
+  const lx=p.x+p.w/2+p.face*2,ly=p.y+2-cy,rad=58+Math.sin(tick*.21)*1.5;
   const g=sctx.createRadialGradient(lx,ly,4,lx,ly,rad);
   g.addColorStop(0,'rgba(0,0,0,1)');g.addColorStop(.55,'rgba(0,0,0,.75)');g.addColorStop(1,'rgba(0,0,0,0)');
   sctx.fillStyle=g;sctx.beginPath();sctx.arc(lx,ly,rad,0,Math.PI*2);sctx.fill();
@@ -446,7 +525,7 @@ addEventListener('keydown',e=>{const k=KEYS[e.key];if(k){kb[k]=true;initAudio();
 addEventListener('keyup',e=>{const k=KEYS[e.key];if(k)kb[k]=false;});
 
 // ---- loop ----
-loadLevel(); p.x=start.x; p.y=start.y;
+loadLevel(); resetActors(); p.x=start.x; p.y=start.y;
 let last=performance.now(),acc=0;const STEP=1000/60;
 function frame(now){
   acc+=Math.min(100,now-last);last=now;
